@@ -7,7 +7,6 @@ import { accessor } from '~/store'
 
 import {
   SystemMessagePayload,
-  SignalProvidePayload,
   MemberListPayload,
   MemberDisconnectPayload,
   MemberPayload,
@@ -19,11 +18,11 @@ import {
   ScreenConfigurationsPayload,
   ScreenResolutionPayload,
   BroadcastStatusPayload,
-  AdminPayload,
   AdminTargetPayload,
   AdminLockMessage,
   SystemInitPayload,
   AdminLockResource,
+  FileTransferListPayload,
 } from './messages'
 
 interface NekoEvents extends BaseEvents {}
@@ -46,6 +45,8 @@ export class NekoClient extends BaseClient implements EventEmitter<NekoEvents> {
     this.$vue = vue
     this.$accessor = vue.$accessor
     this.url = url
+    // convert ws url to http url
+    this.$vue.$http.defaults.baseURL = url.replace(/^ws/, 'http').replace(/\/ws$/, '')
   }
 
   private cleanup() {
@@ -128,13 +129,14 @@ export class NekoClient extends BaseClient implements EventEmitter<NekoEvents> {
     this.$accessor.video.setStream(0)
   }
 
-  protected [EVENT.DATA](data: any) {}
+  protected [EVENT.DATA]() {}
 
   /////////////////////////////
   // System Events
   /////////////////////////////
-  protected [EVENT.SYSTEM.INIT]({ implicit_hosting, locks }: SystemInitPayload) {
+  protected [EVENT.SYSTEM.INIT]({ implicit_hosting, locks, file_transfer, heartbeat_interval }: SystemInitPayload) {
     this.$accessor.remote.setImplicitHosting(implicit_hosting)
+    this.$accessor.remote.setFileTransfer(file_transfer)
 
     for (const resource in locks) {
       this[EVENT.ADMIN.LOCK]({
@@ -142,6 +144,11 @@ export class NekoClient extends BaseClient implements EventEmitter<NekoEvents> {
         resource: resource as AdminLockResource,
         id: locks[resource],
       })
+    }
+
+    if (heartbeat_interval > 0) {
+      if (this._ws_heartbeat) clearInterval(this._ws_heartbeat)
+      this._ws_heartbeat = window.setInterval(() => this.sendMessage(EVENT.CLIENT.HEARTBEAT), heartbeat_interval * 1000)
     }
   }
 
@@ -349,6 +356,14 @@ export class NekoClient extends BaseClient implements EventEmitter<NekoEvents> {
     }
 
     this.$accessor.chat.newEmote({ type: emote })
+  }
+
+  /////////////////////////////
+  // File Transfer Events
+  /////////////////////////////
+  protected [EVENT.FILETRANSFER.LIST]({ cwd, files }: FileTransferListPayload) {
+    this.$accessor.files.setCwd(cwd)
+    this.$accessor.files.setFileList(files)
   }
 
   /////////////////////////////

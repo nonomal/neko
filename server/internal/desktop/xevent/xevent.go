@@ -8,18 +8,26 @@ package xevent
 import "C"
 
 import (
-	"strings"
-	"time"
 	"unsafe"
 
-	"github.com/kataras/go-events"
+	"m1k1o/neko/internal/types"
 )
 
-var Emmiter events.EventEmmiter
-var file_chooser_dialog_window uint32 = 0
+var CursorChangedChannel chan uint64
+var ClipboardUpdatedChannel chan struct{}
+var EventErrorChannel chan types.DesktopErrorMessage
 
 func init() {
-	Emmiter = events.New()
+	CursorChangedChannel = make(chan uint64)
+	ClipboardUpdatedChannel = make(chan struct{})
+	EventErrorChannel = make(chan types.DesktopErrorMessage)
+
+	go func() {
+		for {
+			// TODO: Reserved for future use.
+			<-CursorChangedChannel
+		}
+	}()
 }
 
 func EventLoop(display string) {
@@ -29,53 +37,39 @@ func EventLoop(display string) {
 	C.XEventLoop(displayUnsafe)
 }
 
+// TODO: Shutdown function.
+//close(CursorChangedChannel)
+//close(ClipboardUpdatedChannel)
+//close(EventErrorChannel)
+
 //export goXEventCursorChanged
 func goXEventCursorChanged(event C.XFixesCursorNotifyEvent) {
-	Emmiter.Emit("cursor-changed", uint64(event.cursor_serial))
+	CursorChangedChannel <- uint64(event.cursor_serial)
 }
 
 //export goXEventClipboardUpdated
 func goXEventClipboardUpdated() {
-	Emmiter.Emit("clipboard-updated")
+	ClipboardUpdatedChannel <- struct{}{}
 }
 
 //export goXEventConfigureNotify
 func goXEventConfigureNotify(display *C.Display, window C.Window, name *C.char, role *C.char) {
-	if C.GoString(role) != "GtkFileChooserDialog" {
-		return
-	}
 
-	// TODO: Refactor. Right now processing of this dialog relies on identifying
-	// via its name. When that changes to role, this condition should be removed.
-	if !strings.HasPrefix(C.GoString(name), "Open File") {
-		return
-	}
-
-	C.XFileChooserHide(display, window)
-
-	// Because first dialog is not put properly to background
-	time.Sleep(10 * time.Millisecond)
-	C.XFileChooserHide(display, window)
-
-	if file_chooser_dialog_window == 0 {
-		file_chooser_dialog_window = uint32(window)
-		Emmiter.Emit("file-chooser-dialog-opened")
-	}
 }
 
 //export goXEventUnmapNotify
 func goXEventUnmapNotify(window C.Window) {
-	if uint32(window) != file_chooser_dialog_window {
-		return
-	}
 
-	file_chooser_dialog_window = 0
-	Emmiter.Emit("file-chooser-dialog-closed")
 }
 
 //export goXEventError
 func goXEventError(event *C.XErrorEvent, message *C.char) {
-	Emmiter.Emit("event-error", uint8(event.error_code), C.GoString(message), uint8(event.request_code), uint8(event.minor_code))
+	EventErrorChannel <- types.DesktopErrorMessage{
+		Error_code:   uint8(event.error_code),
+		Message:      C.GoString(message),
+		Request_code: uint8(event.request_code),
+		Minor_code:   uint8(event.minor_code),
+	}
 }
 
 //export goXEventActive

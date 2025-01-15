@@ -60,7 +60,7 @@
 </style>
 
 <script lang="ts">
-  import { Component, Ref, Watch, Vue } from 'vue-property-decorator'
+  import { Component, Vue } from 'vue-property-decorator'
   import { messages } from '~/locale'
 
   @Component({ name: 'neko-menu' })
@@ -75,6 +75,21 @@
 
     about() {
       this.$accessor.client.toggleAbout()
+    }
+
+    mounted() {
+      const default_lang = new URL(location.href).searchParams.get('lang')
+      if (default_lang && this.langs.includes(default_lang)) {
+        this.$i18n.locale = default_lang
+      }
+      const show_side = new URL(location.href).searchParams.get('show_side')
+      if (show_side !== null) {
+        this.$accessor.client.setSide(show_side === '1')
+      }
+      const mute_chat = new URL(location.href).searchParams.get('mute_chat')
+      if (mute_chat !== null) {
+        this.$accessor.settings.setSound(mute_chat !== '1')
+      }
     }
   }
 </script>

@@ -74,6 +74,11 @@ func (h *MessageHandler) Message(id string, raw []byte) error {
 	}
 
 	switch header.Event {
+	// Client Events
+	case event.CLIENT_HEARTBEAT:
+		// do nothing
+		return nil
+
 	// Signal Events
 	case event.SIGNAL_OFFER:
 		payload := &message.SignalOffer{}
@@ -86,6 +91,12 @@ func (h *MessageHandler) Message(id string, raw []byte) error {
 		return errors.Wrapf(
 			utils.Unmarshal(payload, raw, func() error {
 				return h.signalRemoteAnswer(id, session, payload)
+			}), "%s failed", header.Event)
+	case event.SIGNAL_CANDIDATE:
+		payload := &message.SignalCandidate{}
+		return errors.Wrapf(
+			utils.Unmarshal(payload, raw, func() error {
+				return h.signalRemoteCandidate(id, session, payload)
 			}), "%s failed", header.Event)
 
 	// Control Events
@@ -126,6 +137,10 @@ func (h *MessageHandler) Message(id string, raw []byte) error {
 				return h.chatEmote(id, session, payload)
 			}), "%s failed", header.Event)
 
+	// File Transfer Events
+	case event.FILETRANSFER_REFRESH:
+		return errors.Wrapf(h.FileTransferRefresh(session), "%s failed", header.Event)
+
 	// Screen Events
 	case event.SCREEN_RESOLUTION:
 		return errors.Wrapf(h.screenResolution(id, session), "%s failed", header.Event)
@@ -138,15 +153,15 @@ func (h *MessageHandler) Message(id string, raw []byte) error {
 				return h.screenSet(id, session, payload)
 			}), "%s failed", header.Event)
 
-	// Boradcast Events
-	case event.BORADCAST_CREATE:
+	// Broadcast Events
+	case event.BROADCAST_CREATE:
 		payload := &message.BroadcastCreate{}
 		return errors.Wrapf(
 			utils.Unmarshal(payload, raw, func() error {
-				return h.boradcastCreate(session, payload)
+				return h.broadcastCreate(session, payload)
 			}), "%s failed", header.Event)
-	case event.BORADCAST_DESTROY:
-		return errors.Wrapf(h.boradcastDestroy(session), "%s failed", header.Event)
+	case event.BROADCAST_DESTROY:
+		return errors.Wrapf(h.broadcastDestroy(session), "%s failed", header.Event)
 
 	// Admin Events
 	case event.ADMIN_LOCK:

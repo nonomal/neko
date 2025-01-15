@@ -42,9 +42,9 @@ server {
 
 After successfully installing and running neko, you might want to get rid of the port in the url, use DNS instead of IP address and also having SSL.
 This will remove the port from the URL and also enables HTTPS.
-To do this, you have to get running apache server. Now you can go into the `/etc/apache2/sites-available` folder and create new config file for example `neko.conf`
-After creating new config file, you can use this example config and paste it in. Some thing might vary on your machine so read through and modify if needed.
-Bear in mind that your neko server doesn't have to run on the same computer as apache. They just have to be on the same network and then you replace localhost with correct internal IP.
+To do this, you have to get running Apache server. Now you can go into the `/etc/apache2/sites-available` folder and create new config file for example `neko.conf`
+After creating new config file, you can use this example config and paste it in. Some things may vary on your machine so read through and modify if needed.
+Bear in mind that your neko server doesn't have to run on the same computer as Apache. They just have to be on the same network, and then you replace localhost with correct internal IP.
 
 ```xml
 <VirtualHost *:80>
@@ -114,3 +114,60 @@ https://example.com {
 ```
 
 (by @ccallahan, [source](https://github.com/nurdism/neko/pull/125/commits/eb4ceda75423b0d960c8aea0240acf6d7a10fef4))
+
+## HAProxy
+
+Using your frontend section *(mine is called http-in)*, add the ACL to redirect correctly to your n.eko instance.
+
+```sh
+frontend http-in
+    #/********
+    #* NEKO *
+    acl neko_rule_http hdr(host) neko.domain.com # Adapt the domain
+    use_backend neko_srv if neko_rule_http
+    #********/
+
+
+backend neko_srv
+    mode http
+    option httpchk
+        server neko 172.16.0.0:8080 # Adapt the IP
+```
+
+Then, restart the haproxy service.
+```sh
+service haproxy restart
+```
+
+### Having trouble reaching your HAProxy ?
+
+Try theses solution :
+
+- Verify the logs / what HAProxy is telling you :
+> ```sh
+> service haproxy status
+> ```
+
+- If the service is UP and the ACL rule + backend is OK then tail the log and keep them to verify :
+> ```sh
+> tail -f /var/log/haproxy.log
+> # after that, go to your neko.instance.com and look for the logs in the shell 
+> ```
+
+- Ensure you set the timeout to 60 seconds before the request fail. 
+> ```sh
+> global
+>         stats timeout 60s
+> ```
+
+- Ensure you set the forwardfor and the timeout aswell in the defaults section.
+> ```sh
+> defaults
+>         option forwardfor
+>         timeout connect 30000
+>         timeout client  65000
+>         timeout server  65000
+> ```
+*(Don't forget to restart the service each time you modify the `.cfg` file !)*
+
+(by @RisedSky)

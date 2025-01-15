@@ -12,34 +12,31 @@ import (
 	"m1k1o/neko/internal/types/codec"
 )
 
-var moveSinkListenerMu = sync.Mutex{}
-
 type StreamSinkManagerCtx struct {
-	logger zerolog.Logger
-	mu     sync.Mutex
-	wg     sync.WaitGroup
+	logger        zerolog.Logger
+	mu            sync.Mutex
+	sampleChannel chan types.Sample
 
 	codec      codec.RTPCodec
 	pipeline   *gst.Pipeline
 	pipelineMu sync.Mutex
-	pipelineFn func() (*gst.Pipeline, error)
+	pipelineFn func() (string, error)
 
 	listeners   int
 	listenersMu sync.Mutex
-
-	sampleFn func(sample types.Sample)
 }
 
-func streamSinkNew(codec codec.RTPCodec, pipelineFn func() (*gst.Pipeline, error), video_id string) *StreamSinkManagerCtx {
+func streamSinkNew(codec codec.RTPCodec, pipelineFn func() (string, error), video_id string) *StreamSinkManagerCtx {
 	logger := log.With().
 		Str("module", "capture").
 		Str("submodule", "stream-sink").
 		Str("video_id", video_id).Logger()
 
 	manager := &StreamSinkManagerCtx{
-		logger:     logger,
-		codec:      codec,
-		pipelineFn: pipelineFn,
+		logger:        logger,
+		codec:         codec,
+		pipelineFn:    pipelineFn,
+		sampleChannel: make(chan types.Sample),
 	}
 
 	return manager
@@ -49,11 +46,6 @@ func (manager *StreamSinkManagerCtx) shutdown() {
 	manager.logger.Info().Msgf("shutdown")
 
 	manager.destroyPipeline()
-	manager.wg.Wait()
-}
-
-func (manager *StreamSinkManagerCtx) OnSample(listener func(sample types.Sample)) {
-	manager.sampleFn = listener
 }
 
 func (manager *StreamSinkManagerCtx) Codec() codec.RTPCodec {
@@ -139,42 +131,28 @@ func (manager *StreamSinkManagerCtx) createPipeline() error {
 		return types.ErrCapturePipelineAlreadyExists
 	}
 
-	var err error
-
-	manager.logger.Info().
-		Str("codec", manager.codec.Name).
-		Msgf("creating pipeline")
-
-	manager.pipeline, err = manager.pipelineFn()
+	pipelineStr, err := manager.pipelineFn()
 	if err != nil {
 		return err
 	}
 
 	manager.logger.Info().
 		Str("codec", manager.codec.Name).
-		Str("src", manager.pipeline.Src).
-		Msgf("created pipeline")
+		Str("src", pipelineStr).
+		Msgf("creating pipeline")
 
-	manager.pipeline.AttachAppsink("appsink")
+	manager.pipeline, err = gst.CreatePipeline(pipelineStr)
+	if err != nil {
+		return err
+	}
+
+	appsinkSubfix := "audio"
+	if manager.codec.IsVideo() {
+		appsinkSubfix = "video"
+	}
+
+	manager.pipeline.AttachAppsink("appsink"+appsinkSubfix, manager.sampleChannel)
 	manager.pipeline.Play()
-
-	manager.wg.Add(1)
-	pipeline := manager.pipeline
-
-	go func() {
-		manager.logger.Debug().Msg("started emitting samples")
-		defer manager.wg.Done()
-
-		for {
-			sample, ok := <-pipeline.Sample
-			if !ok {
-				manager.logger.Debug().Msg("stopped emitting samples")
-				return
-			}
-
-			manager.sampleFn(sample)
-		}
-	}()
 
 	return nil
 }
@@ -190,4 +168,8 @@ func (manager *StreamSinkManagerCtx) destroyPipeline() {
 	manager.pipeline.Destroy()
 	manager.logger.Info().Msgf("destroying pipeline")
 	manager.pipeline = nil
+}
+
+func (manager *StreamSinkManagerCtx) GetSampleChannel() chan types.Sample {
+	return manager.sampleChannel
 }

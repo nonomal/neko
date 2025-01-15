@@ -3,10 +3,12 @@ package websocket
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -25,12 +27,20 @@ const CONTROL_PROTECTION_SESSION = "by_control_protection"
 func New(sessions types.SessionManager, desktop types.DesktopManager, capture types.CaptureManager, webrtc types.WebRTCManager, conf *config.WebSocket) *WebSocketHandler {
 	logger := log.With().Str("module", "websocket").Logger()
 
-	state := state.New()
+	state := state.New(conf.FileTransferEnabled, conf.FileTransferPath)
 
 	// if control protection is enabled
 	if conf.ControlProtection {
 		state.Lock("control", CONTROL_PROTECTION_SESSION)
 		logger.Info().Msgf("control locked on behalf of control protection")
+	}
+
+	// create file transfer directory if not exists
+	if conf.FileTransferEnabled {
+		if _, err := os.Stat(conf.FileTransferPath); os.IsNotExist(err) {
+			err = os.Mkdir(conf.FileTransferPath, os.ModePerm)
+			logger.Err(err).Msg("creating file transfer directory")
+		}
 	}
 
 	// apply default locks
@@ -91,102 +101,152 @@ type WebSocketHandler struct {
 }
 
 func (ws *WebSocketHandler) Start() {
-	ws.sessions.OnCreated(func(id string, session types.Session) {
-		if err := ws.handler.SessionCreated(id, session); err != nil {
-			ws.logger.Warn().Str("id", id).Err(err).Msg("session created with and error")
-		} else {
-			ws.logger.Debug().Str("id", id).Msg("session created")
-		}
-	})
+	go func() {
+		for {
+			e, ok := <-ws.sessions.GetEventsChannel()
+			if !ok {
+				ws.logger.Info().Msg("session channel was closed")
+				return
+			}
 
-	ws.sessions.OnConnected(func(id string, session types.Session) {
-		if err := ws.handler.SessionConnected(id, session); err != nil {
-			ws.logger.Warn().Str("id", id).Err(err).Msg("session connected with and error")
-		} else {
-			ws.logger.Debug().Str("id", id).Msg("session connected")
-		}
+			switch e.Type {
+			case types.SESSION_CREATED:
+				if err := ws.handler.SessionCreated(e.Id, ws.conf.HeartbeatInterval, e.Session); err != nil {
+					ws.logger.Warn().Str("id", e.Id).Err(err).Msg("session created with and error")
+				} else {
+					ws.logger.Debug().Str("id", e.Id).Msg("session created")
+				}
+			case types.SESSION_CONNECTED:
+				if err := ws.handler.SessionConnected(e.Id, e.Session); err != nil {
+					ws.logger.Warn().Str("id", e.Id).Err(err).Msg("session connected with and error")
+				} else {
+					ws.logger.Debug().Str("id", e.Id).Msg("session connected")
+				}
 
-		// if control protection is enabled and at least one admin
-		// and if room was locked on behalf control protection, unlock
-		sess, ok := ws.state.GetLocked("control")
-		if ok && ws.conf.ControlProtection && sess == CONTROL_PROTECTION_SESSION && len(ws.sessions.Admins()) > 0 {
-			ws.state.Unlock("control")
-			ws.sessions.SetControlLocked(false) // TODO: Handle locks in sessions as flags.
-			ws.logger.Info().Msgf("control unlocked on behalf of control protection")
+				// if control protection is enabled and at least one admin
+				// and if room was locked on behalf control protection, unlock
+				sess, ok := ws.state.GetLocked("control")
+				if ok && ws.conf.ControlProtection && sess == CONTROL_PROTECTION_SESSION && len(ws.sessions.Admins()) > 0 {
+					ws.state.Unlock("control")
+					ws.sessions.SetControlLocked(false) // TODO: Handle locks in sessions as flags.
+					ws.logger.Info().Msgf("control unlocked on behalf of control protection")
 
-			if err := ws.sessions.Broadcast(
-				message.AdminLock{
-					Event:    event.ADMIN_UNLOCK,
-					ID:       id,
-					Resource: "control",
-				}, nil); err != nil {
-				ws.logger.Warn().Err(err).Msgf("broadcasting event %s has failed", event.ADMIN_UNLOCK)
+					if err := ws.sessions.Broadcast(
+						message.AdminLock{
+							Event:    event.ADMIN_UNLOCK,
+							ID:       e.Id,
+							Resource: "control",
+						}, nil); err != nil {
+						ws.logger.Warn().Err(err).Msgf("broadcasting event %s has failed", event.ADMIN_UNLOCK)
+					}
+				}
+
+				// remove outdated stats
+				if e.Session.Admin() {
+					ws.lastAdminLeftAt = nil
+				} else {
+					ws.lastUserLeftAt = nil
+				}
+			case types.SESSION_DESTROYED:
+				if err := ws.handler.SessionDestroyed(e.Id); err != nil {
+					ws.logger.Warn().Str("id", e.Id).Err(err).Msg("session destroyed with and error")
+				} else {
+					ws.logger.Debug().Str("id", e.Id).Msg("session destroyed")
+				}
+
+				membersCount := len(ws.sessions.Members())
+				adminCount := len(ws.sessions.Admins())
+
+				// if control protection is enabled and no admin
+				// and room is not locked, lock
+				ok := ws.state.IsLocked("control")
+				if !ok && ws.conf.ControlProtection && adminCount == 0 {
+					ws.state.Lock("control", CONTROL_PROTECTION_SESSION)
+					ws.sessions.SetControlLocked(true) // TODO: Handle locks in sessions as flags.
+					ws.logger.Info().Msgf("control locked and released on behalf of control protection")
+					ws.handler.AdminRelease(e.Id, e.Session)
+
+					if err := ws.sessions.Broadcast(
+						message.AdminLock{
+							Event:    event.ADMIN_LOCK,
+							ID:       e.Id,
+							Resource: "control",
+						}, nil); err != nil {
+						ws.logger.Warn().Err(err).Msgf("broadcasting event %s has failed", event.ADMIN_LOCK)
+					}
+				}
+
+				// if this was the last admin
+				if e.Session.Admin() && adminCount == 0 {
+					now := time.Now()
+					ws.lastAdminLeftAt = &now
+				}
+
+				// if this was the last user
+				if !e.Session.Admin() && membersCount-adminCount == 0 {
+					now := time.Now()
+					ws.lastUserLeftAt = &now
+				}
+			case types.SESSION_HOST_SET:
+				// TODO: Unused.
+			case types.SESSION_HOST_CLEARED:
+				// TODO: Unused.
 			}
 		}
+	}()
 
-		// remove outdated stats
-		if session.Admin() {
-			ws.lastAdminLeftAt = nil
-		} else {
-			ws.lastUserLeftAt = nil
-		}
-	})
-
-	ws.sessions.OnDestroy(func(id string, session types.Session) {
-		if err := ws.handler.SessionDestroyed(id); err != nil {
-			ws.logger.Warn().Str("id", id).Err(err).Msg("session destroyed with and error")
-		} else {
-			ws.logger.Debug().Str("id", id).Msg("session destroyed")
-		}
-
-		membersCount := len(ws.sessions.Members())
-		adminCount := len(ws.sessions.Admins())
-
-		// if control protection is enabled and no admin
-		// and room is not locked, lock
-		ok := ws.state.IsLocked("control")
-		if !ok && ws.conf.ControlProtection && adminCount == 0 {
-			ws.state.Lock("control", CONTROL_PROTECTION_SESSION)
-			ws.sessions.SetControlLocked(true) // TODO: Handle locks in sessions as flags.
-			ws.logger.Info().Msgf("control locked and released on behalf of control protection")
-			ws.handler.AdminRelease(id, session)
-
-			if err := ws.sessions.Broadcast(
-				message.AdminLock{
-					Event:    event.ADMIN_LOCK,
-					ID:       id,
-					Resource: "control",
-				}, nil); err != nil {
-				ws.logger.Warn().Err(err).Msgf("broadcasting event %s has failed", event.ADMIN_LOCK)
+	go func() {
+		for {
+			_, ok := <-ws.desktop.GetClipboardUpdatedChannel()
+			if !ok {
+				ws.logger.Info().Msg("clipboard update channel closed")
+				return
 			}
-		}
 
-		// if this was the last admin
-		if session.Admin() && adminCount == 0 {
-			now := time.Now()
-			ws.lastAdminLeftAt = &now
-		}
+			session, ok := ws.sessions.GetHost()
+			if !ok {
+				return
+			}
 
-		// if this was the last user
-		if !session.Admin() && membersCount-adminCount == 0 {
-			now := time.Now()
-			ws.lastUserLeftAt = &now
-		}
-	})
+			err := session.Send(message.Clipboard{
+				Event: event.CONTROL_CLIPBOARD,
+				Text:  ws.desktop.ReadClipboard(),
+			})
 
-	ws.desktop.OnClipboardUpdated(func() {
-		session, ok := ws.sessions.GetHost()
-		if !ok {
+			ws.logger.Err(err).Msg("sync clipboard")
+		}
+	}()
+
+	// watch for file changes and send file list if file transfer is enabled
+	if ws.conf.FileTransferEnabled {
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			ws.logger.Err(err).Msg("unable to start file transfer dir watcher")
 			return
 		}
 
-		err := session.Send(message.Clipboard{
-			Event: event.CONTROL_CLIPBOARD,
-			Text:  ws.desktop.ReadClipboard(),
-		})
+		go func() {
+			for {
+				select {
+				case e, ok := <-watcher.Events:
+					if !ok {
+						ws.logger.Info().Msg("file transfer dir watcher closed")
+						return
+					}
+					if e.Has(fsnotify.Create) || e.Has(fsnotify.Remove) || e.Has(fsnotify.Rename) {
+						ws.logger.Debug().Str("event", e.String()).Msg("file transfer dir watcher event")
+						ws.handler.FileTransferRefresh(nil)
+					}
+				case err := <-watcher.Errors:
+					ws.logger.Err(err).Msg("error in file transfer dir watcher")
+				}
+			}
+		}()
 
-		ws.logger.Err(err).Msg("sync clipboard")
-	})
+		if err := watcher.Add(ws.conf.FileTransferPath); err != nil {
+			ws.logger.Err(err).Msg("unable to add file transfer path to watcher")
+		}
+	}
 }
 
 func (ws *WebSocketHandler) Shutdown() error {
@@ -230,7 +290,7 @@ func (ws *WebSocketHandler) Upgrade(w http.ResponseWriter, r *http.Request) erro
 	socket := &WebSocket{
 		id:         id,
 		ws:         ws,
-		address:    utils.GetHttpRequestIP(r, ws.conf.Proxy),
+		address:    r.RemoteAddr,
 		connection: connection,
 	}
 
@@ -383,4 +443,29 @@ func (ws *WebSocketHandler) handle(connection *websocket.Conn, id string) {
 			}
 		}
 	}
+}
+
+//
+// File transfer
+//
+
+func (ws *WebSocketHandler) CanTransferFiles(password string) (bool, error) {
+	if !ws.conf.FileTransferEnabled {
+		return false, nil
+	}
+
+	isAdmin, err := ws.IsAdmin(password)
+	if err != nil {
+		return false, err
+	}
+
+	return isAdmin || !ws.state.IsLocked("file_transfer"), nil
+}
+
+func (ws *WebSocketHandler) FileTransferPath(filename string) string {
+	return ws.state.FileTransferPath(filename)
+}
+
+func (ws *WebSocketHandler) FileTransferEnabled() bool {
+	return ws.conf.FileTransferEnabled
 }

@@ -25,13 +25,14 @@ nat1to1: <ip>
   - Control protection means, users can gain control only if at least one admin is in the room.
   - e.g. `false`
 #### `NEKO_IMPLICIT_CONTROL`:
-  - If enabled members can gain control implicitly, they don't needd to request control.
+  - If enabled members can gain control implicitly, they don't need to request control.
   - e.g. `false`
 #### `NEKO_LOCKS`:
   - Resources, that will be locked when starting, separated by whitespace.
   - Currently supported:
     - `control`
     - `login`
+    - `file_transfer`
   - e.g. `control`
 
 ### WebRTC
@@ -78,13 +79,14 @@ nat1to1: <ip>
     - `gstreamer1.0-plugins-good`
     - `gstreamer1.0-plugins-bad`
     - `gstreamer1.0-plugins-ugly`
-  - e.g. `ximagesrc display-name=%s show-pointer=true use-damage=false ! video/x-raw,framerate=30/1 ! videoconvert ! queue ! video/x-raw,format=NV12 ! x264enc threads=4 bitrate=3500 key-int-max=60 vbv-buf-capacity=4000 byte-stream=true tune=zerolatency speed-preset=veryfast ! video/x-h264,stream-format=byte-stream`
+  - e.g. `ximagesrc display-name=%s show-pointer=true use-damage=false ! video/x-raw,framerate=30/1 ! videoconvert ! queue ! video/x-raw,format=NV12 ! x264enc threads=4 bitrate=3500 key-int-max=60 vbv-buf-capacity=4000 byte-stream=true tune=zerolatency speed-preset=veryfast ! video/x-h264,stream-format=byte-stream,profile=constrained-baseline`
 #### `NEKO_MAX_FPS`:
   - The resulting stream frames per seconds should be capped *(0 for uncapped)*.
   - e.g. `0`
 #### `NEKO_HWENC`:
-  - Use hardware accelerated encoding, for now supported only `VAAPI`.
-  - e.g. `VAAPI`
+  - none *(default CPU encoding)*
+  - vaapi
+  - nvenc
 
 ### Audio
 
@@ -92,7 +94,7 @@ nat1to1: <ip>
   - opus *(default encoder)*
   - g722
   - pcmu
-  - pcma 
+  - pcma
 #### `NEKO_AUDIO_BITRATE`:
   - Bitrate of the audio stream in kb/s.
   - e.g. `196`
@@ -105,9 +107,11 @@ nat1to1: <ip>
 #### `NEKO_BROADCAST_PIPELINE`:
   - Makes it possible to create custom gstreamer pipeline used for broadcasting, strings `{url}`, `{device}` and `{display}` will be replaced.
 #### `NEKO_BROADCAST_URL`:
-  - Set a default URL for broadcast streams. Setting this value will automatically enable broadcasting when n.eko starts. It can be disabled/changed later by admins in the GUI.
+  - Set a default URL for broadcast streams. It can be disabled/changed later by admins in the GUI.
   - e.g. `rtmp://<your-server>:1935/ingest/<stream-key>`
-
+#### `NEKO_BROADCAST_AUTOSTART`:
+  - Automatically start broadcasting when neko starts and broadcast_url is set.
+  - e.g. `true`
 ### Server
 
 #### `NEKO_BIND`:
@@ -125,6 +129,19 @@ nat1to1: <ip>
 #### `NEKO_PATH_PREFIX`:
   - Path prefix for HTTP requests.
   - e.g. `/neko/`
+#### `NEKO_CORS`:
+  - Cross origin request sharing, whitespace separated list of allowed hosts, `*` for all.
+  - e.g. `127.0.0.1 neko.example.com`
+
+### File Transfer
+
+#### `NEKO_FILE_TRANSFER_ENABLED`:
+  - Enable file transfer feature.
+  - e.g. `true`
+#### `NEKO_FILE_TRANSFER_PATH`:
+  - Path where files will be transferred between the host and users. By default, this is
+  `/home/neko/Downloads`. If the path doesn't exist, it will be created.
+  - e.g. `/home/neko/Desktop`
 
 ### Expert settings
 
@@ -152,9 +169,12 @@ Flags:
       --broadcast_url string        URL for broadcasting, setting this value will automatically enable broadcasting
       --cert string                 path to the SSL cert used to secure the neko server
       --control_protection          control protection means, users can gain control only if at least one admin is in the room
-      --device string               audio device to capture (default "auto_null.monitor")
+      --cors strings                list of allowed origins for CORS (default [*])
+      --device string               audio device to capture (default "audio_output.monitor")
       --display string              XDisplay to capture (default ":99.0")
       --epr string                  limits the pool of ephemeral ports that ICE UDP connections can allocate from (default "59000-59100")
+      --file_transfer_enabled       enable file transfer feature (default false)
+      --file_transfer_path string   path to use for file transfer (default "/home/neko/Downloads")
       --g722                        DEPRECATED: use audio_codec
       --h264                        DEPRECATED: use video_codec
   -h, --help                        help for serve

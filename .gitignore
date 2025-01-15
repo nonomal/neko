@@ -23,10 +23,6 @@ pids
 *.seed
 *.pid.lock
 
-# Lock files
-yarn.lock
-package-lock.json
-
 # TypeScript incremental compilation cache
 *.tsbuildinfo
 
@@ -37,3 +33,6 @@ bin
 
 # Environment files
 *.env
+
+# Code Editors
+.idea

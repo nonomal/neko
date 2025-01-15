@@ -20,6 +20,7 @@ export interface BaseEvents {
 
 export abstract class BaseClient extends EventEmitter<BaseEvents> {
   protected _ws?: WebSocket
+  protected _ws_heartbeat?: number
   protected _peer?: RTCPeerConnection
   protected _channel?: RTCDataChannel
   protected _timeout?: number
@@ -66,8 +67,8 @@ export abstract class BaseClient extends EventEmitter<BaseEvents> {
       this._ws = new WebSocket(`${url}?password=${encodeURIComponent(password)}`)
       this.emit('debug', `connecting to ${this._ws.url}`)
       this._ws.onmessage = this.onMessage.bind(this)
-      this._ws.onerror = (event) => this.onError.bind(this)
-      this._ws.onclose = (event) => this.onDisconnected.bind(this, new Error('websocket closed'))
+      this._ws.onerror = () => this.onError.bind(this)
+      this._ws.onclose = () => this.onDisconnected.bind(this, new Error('websocket closed'))
       this._timeout = window.setTimeout(this.onTimeout.bind(this), 15000)
     } catch (err: any) {
       this.onDisconnected(err)
@@ -78,6 +79,11 @@ export abstract class BaseClient extends EventEmitter<BaseEvents> {
     if (this._timeout) {
       clearTimeout(this._timeout)
       this._timeout = undefined
+    }
+
+    if (this._ws_heartbeat) {
+      clearInterval(this._ws_heartbeat)
+      this._ws_heartbeat = undefined
     }
 
     if (this._ws) {
@@ -203,22 +209,23 @@ export abstract class BaseClient extends EventEmitter<BaseEvents> {
       return
     }
 
-    this._peer = new RTCPeerConnection()
     if (lite !== true) {
       this._peer = new RTCPeerConnection({
         iceServers: servers,
       })
+    } else {
+      this._peer = new RTCPeerConnection()
     }
 
-    this._peer.onconnectionstatechange = (event) => {
+    this._peer.onconnectionstatechange = () => {
       this.emit('debug', `peer connection state changed`, this._peer ? this._peer.connectionState : undefined)
     }
 
-    this._peer.onsignalingstatechange = (event) => {
+    this._peer.onsignalingstatechange = () => {
       this.emit('debug', `peer signaling state changed`, this._peer ? this._peer.signalingState : undefined)
     }
 
-    this._peer.oniceconnectionstatechange = (event) => {
+    this._peer.oniceconnectionstatechange = () => {
       this._state = this._peer!.iceConnectionState
 
       this.emit('debug', `peer ice connection state changed: ${this._peer!.iceConnectionState}`)
@@ -251,11 +258,28 @@ export abstract class BaseClient extends EventEmitter<BaseEvents> {
 
     this._peer.ontrack = this.onTrack.bind(this)
 
+    this._peer.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
+      if (!event.candidate) {
+        this.emit('debug', `sent all local ICE candidates`)
+        return
+      }
+
+      const init = event.candidate.toJSON()
+      this.emit('debug', `sending local ICE candidate`, init)
+
+      this._ws!.send(
+        JSON.stringify({
+          event: EVENT.SIGNAL.CANDIDATE,
+          data: JSON.stringify(init),
+        }),
+      )
+    }
+
     this._peer.onnegotiationneeded = async () => {
       this.emit('warn', `negotiation is needed`)
 
       const d = await this._peer!.createOffer()
-      this._peer!.setLocalDescription(d)
+      await this._peer!.setLocalDescription(d)
 
       this._ws!.send(
         JSON.stringify({
@@ -277,15 +301,19 @@ export abstract class BaseClient extends EventEmitter<BaseEvents> {
       return
     }
 
-    this._peer.setRemoteDescription({ type: 'offer', sdp })
+    await this._peer.setRemoteDescription({ type: 'offer', sdp })
 
     for (const candidate of this._candidates) {
-      this._peer.addIceCandidate(candidate)
+      await this._peer.addIceCandidate(candidate)
     }
     this._candidates = []
 
     try {
       const d = await this._peer.createAnswer()
+
+      // add stereo=1 to answer sdp to enable stereo audio for chromium
+      d.sdp = d.sdp?.replace(/(stereo=1;)?useinbandfec=1/, 'useinbandfec=1;stereo=1')
+
       this._peer!.setLocalDescription(d)
 
       this._ws!.send(
@@ -306,7 +334,7 @@ export abstract class BaseClient extends EventEmitter<BaseEvents> {
       return
     }
 
-    this._peer.setRemoteDescription({ type: 'answer', sdp })
+    await this._peer.setRemoteDescription({ type: 'answer', sdp })
   }
 
   private async onMessage(e: MessageEvent) {

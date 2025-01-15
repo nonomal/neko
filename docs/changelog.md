@@ -3,15 +3,68 @@
 ## master branch
 
 ### New Features
+- Added nvidia support for firefox.
+- Added `?lang=<lang>` parameter to the URL, which will set the language of the interface (by @mbattista).
+- Added `?show_side=1` and `?mute_chat=1` parameter to the URL, for chat mute and show side (by @mbattista).
+- Added `NEKO_BROADCAST_AUTOSTART` to automatically start or do not start broadcasting when the room is created. By default, it is set to `true` because it was the previous behavior.
+
+### Bugs
+- Fix incorrect version sorting for chromium, microsoft-edge, opera and ungoogledchromium.
+- Fix buffer overflow in Gstreamer log function [#382](https://github.com/m1k1o/neko/pull/382) (by @@tt2468).
+
+### Misc
+- Added RTMP broadcast support to nvidia docker image [#274](https://github.com/m1k1o/neko/issues/274).
+- Ensured that paths are writable by neko user [#277](https://github.com/m1k1o/neko/issues/277).
+- Git commit and tag are now included in the build when creating a docker image.
+- Remove any temporary files associated with a Form after file upload, that would be otherwise never removed.
+- Add check for volume parameter in URL before setting volume (by @FapFapDragon).
+- Add glib main loop to capture manager [#383](https://github.com/m1k1o/neko/pull/383) (by @tt2468).
+
+## [n.eko v2.8.0](https://github.com/m1k1o/neko/releases/tag/v2.8.0)
+
+### New Features
+- Added AV1 tag, metadata and pipeline. Unfortunately does not work yet, since the encoding is way too slow (by @mbattista).
+- Added `m1k1o/neko:kde` tag as an alternative to `m1k1o/neko:xfce`.
+- New VirtualGL version 3.1 was released, adding support for Chromium browsers to use Nvidia GPU acceleration!
+- Added `?embed=1` parameter to the URL, which will hide the sidebar and the top bar, so that it can be embedded in other websites.
+- Added `?volume=<0-1>` parameter to the URL, which will set the inital volume of the player (by @urbanekpj).
+- Touch events are now supported on mobile devices (by @urbanekpj).
+- Added NVENC support, hardware h264 encoding for Nvidia GPUs!
+- Fixed an issue where `nvh264enc` did not send SPS and PPS NAL units (by @mbattista).
+
+### Bugs
+- Fixed TCP mux occasional freeze by adding write buffer to it.
+- Fixed stereo problem in chromium-based browsers, where it was only as mono by adding `stereo=1` to opus SDP to clients answer.
+- Fixed keysym mapping for unknown keycodes, which was causing some key combinations to not work on some keyboards.
+- Fixed a bug where `max_fps=0` would lead to an invalid pipeline.
+- Fixed client side webrtc ICE gathering, so that neko can be used without exposed ports, only with STUN and TURN servers.
+- Fixed play state synchronization, when autoplay is disabled.
+
+### Misc
+- Updated to go 1.19 and Node 18, removed go-events as dependency (by @mbattista).
+- Added adaptive framerate which now streams in the framerate you selected from the dropdown.
+- Improved chinese and korean characters support.
+- Disabled autolock for kde, so that it does not lock the screen when you are not using it.
+- Refactored autoplay, so that it will start playing audio, if it's allowed by the browser (by @urbanekpj).
+- Renamed pulseaudio sink from `auto_null` to `audio_output`, because it was ignored by KDE.
+- Pulseaudio is now configured using environment variables, so that users can mount `/home/neko` without losing audio configuration.
+
+## [n.eko v2.7](https://github.com/m1k1o/neko/releases/tag/v2.7)
+
+### New Features
 - Added `m1k1o/neko:vivaldi` tag (thanks @Xeddius).
 - Added `m1k1o/neko:opera` tag (thanks @prophetofxenu).
 - Added `NEKO_PATH_PREFIX`.
 - Added screenshot function `/screenshot.jpg?pwd=<admin>`, works only for unlocked rooms.
+- Added emoji support (by @yesBad).
+- Added file transfer (by @prophetofxenu).
 
 ### Misc
 - Server: Split `remote` to `desktop` and `capture`.
 - Server: Refactored `xorg` - added `xevent` and clipboard is handled as event (no looped polling anymore).
 - Introduced `NEKO_AUDIO_CODEC=` and `NEKO_VIDEO_CODEC=` as a new way of setting codecs.
+- Added CORS.
+- Opera versions are not hardcoded in Dockerfile anymore but automatically are fetch latest.
 
 ## [n.eko v2.6](https://github.com/m1k1o/neko/releases/tag/v2.6)
 

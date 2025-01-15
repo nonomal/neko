@@ -2,6 +2,7 @@ package config
 
 import (
 	"m1k1o/neko/internal/types/codec"
+	"strings"
 
 	"github.com/pion/webrtc/v3"
 	"github.com/rs/zerolog/log"
@@ -9,13 +10,21 @@ import (
 	"github.com/spf13/viper"
 )
 
+type HwEnc int
+
+const (
+	HwEncNone HwEnc = iota
+	HwEncVAAPI
+	HwEncNVENC
+)
+
 type Capture struct {
 	// video
 	Display       string
 	VideoCodec    codec.RTPCodec
-	VideoHWEnc    string // TODO: Pipeline builder.
-	VideoBitrate  uint   // TODO: Pipeline builder.
-	VideoMaxFPS   int16  // TODO: Pipeline builder.
+	VideoHWEnc    HwEnc // TODO: Pipeline builder.
+	VideoBitrate  uint  // TODO: Pipeline builder.
+	VideoMaxFPS   int16 // TODO: Pipeline builder.
 	VideoPipeline string
 
 	// audio
@@ -25,9 +34,9 @@ type Capture struct {
 	AudioPipeline string
 
 	// broadcast
-	BroadcastPipeline string
-	BroadcastUrl      string
-	BroadcastStarted  bool
+	BroadcastPipeline  string
+	BroadcastUrl       string
+	BroadcastAutostart bool
 }
 
 func (Capture) Init(cmd *cobra.Command) error {
@@ -54,6 +63,12 @@ func (Capture) Init(cmd *cobra.Command) error {
 	// DEPRECATED: video codec
 	cmd.PersistentFlags().Bool("vp9", false, "DEPRECATED: use video_codec")
 	if err := viper.BindPFlag("vp9", cmd.PersistentFlags().Lookup("vp9")); err != nil {
+		return err
+	}
+
+	// DEPRECATED: video codec
+	cmd.PersistentFlags().Bool("av1", false, "DEPRECATED: use video_codec")
+	if err := viper.BindPFlag("av1", cmd.PersistentFlags().Lookup("av1")); err != nil {
 		return err
 	}
 
@@ -87,7 +102,7 @@ func (Capture) Init(cmd *cobra.Command) error {
 	// audio
 	//
 
-	cmd.PersistentFlags().String("device", "auto_null.monitor", "audio device to capture")
+	cmd.PersistentFlags().String("device", "audio_output.monitor", "audio device to capture")
 	if err := viper.BindPFlag("device", cmd.PersistentFlags().Lookup("device")); err != nil {
 		return err
 	}
@@ -141,8 +156,13 @@ func (Capture) Init(cmd *cobra.Command) error {
 		return err
 	}
 
-	cmd.PersistentFlags().String("broadcast_url", "", "URL for broadcasting, setting this value will automatically enable broadcasting")
+	cmd.PersistentFlags().String("broadcast_url", "", "a default default URL for broadcast streams, can be disabled/changed later by admins in the GUI")
 	if err := viper.BindPFlag("broadcast_url", cmd.PersistentFlags().Lookup("broadcast_url")); err != nil {
+		return err
+	}
+
+	cmd.PersistentFlags().Bool("broadcast_autostart", true, "automatically start broadcasting when neko starts and broadcast_url is set")
+	if err := viper.BindPFlag("broadcast_autostart", cmd.PersistentFlags().Lookup("broadcast_autostart")); err != nil {
 		return err
 	}
 
@@ -174,13 +194,24 @@ func (s *Capture) Set() {
 	} else if viper.GetBool("h264") {
 		s.VideoCodec = codec.H264()
 		log.Warn().Msg("you are using deprecated config setting 'NEKO_H264=true', use 'NEKO_VIDEO_CODEC=h264' instead")
+	} else if viper.GetBool("av1") {
+		s.VideoCodec = codec.AV1()
+		log.Warn().Msg("you are using deprecated config setting 'NEKO_AV1=true', use 'NEKO_VIDEO_CODEC=av1' instead")
 	}
 
-	videoHWEnc := ""
-	if viper.GetString("hwenc") == "VAAPI" {
-		videoHWEnc = "VAAPI"
+	videoHWEnc := strings.ToLower(viper.GetString("hwenc"))
+	switch videoHWEnc {
+	case "":
+		fallthrough
+	case "none":
+		s.VideoHWEnc = HwEncNone
+	case "vaapi":
+		s.VideoHWEnc = HwEncVAAPI
+	case "nvenc":
+		s.VideoHWEnc = HwEncNVENC
+	default:
+		log.Warn().Str("hwenc", videoHWEnc).Msgf("unknown video hw encoder, using CPU")
 	}
-	s.VideoHWEnc = videoHWEnc
 
 	s.VideoBitrate = viper.GetUint("video_bitrate")
 	s.VideoMaxFPS = int16(viper.GetInt("max_fps"))
@@ -222,5 +253,5 @@ func (s *Capture) Set() {
 
 	s.BroadcastPipeline = viper.GetString("broadcast_pipeline")
 	s.BroadcastUrl = viper.GetString("broadcast_url")
-	s.BroadcastStarted = s.BroadcastUrl != ""
+	s.BroadcastAutostart = viper.GetBool("broadcast_autostart")
 }

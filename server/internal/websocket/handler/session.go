@@ -6,7 +6,7 @@ import (
 	"m1k1o/neko/internal/types/message"
 )
 
-func (h *MessageHandler) SessionCreated(id string, session types.Session) error {
+func (h *MessageHandler) SessionCreated(id string, heartbeatInterval int, session types.Session) error {
 	// send sdp and id over to client
 	if err := h.signalProvide(id, session); err != nil {
 		return err
@@ -14,9 +14,11 @@ func (h *MessageHandler) SessionCreated(id string, session types.Session) error 
 
 	// send initialization information
 	if err := session.Send(message.SystemInit{
-		Event:           event.SYSTEM_INIT,
-		ImplicitHosting: h.webrtc.ImplicitControl(),
-		Locks:           h.state.AllLocked(),
+		Event:             event.SYSTEM_INIT,
+		ImplicitHosting:   h.webrtc.ImplicitControl(),
+		Locks:             h.state.AllLocked(),
+		FileTransfer:      h.state.FileTransferEnabled(),
+		HeartbeatInterval: heartbeatInterval,
 	}); err != nil {
 		h.logger.Warn().Str("id", id).Err(err).Msgf("sending event %s has failed", event.SYSTEM_INIT)
 		return err
@@ -29,7 +31,14 @@ func (h *MessageHandler) SessionCreated(id string, session types.Session) error 
 		}
 
 		// send broadcast status if admin
-		if err := h.boradcastStatus(session); err != nil {
+		if err := h.broadcastStatus(session); err != nil {
+			return err
+		}
+	}
+
+	// send file list if file transfer is enabled
+	if h.state.FileTransferEnabled() && (session.Admin() || !h.state.IsLocked("file_transfer")) {
+		if err := h.FileTransferRefresh(session); err != nil {
 			return err
 		}
 	}
@@ -40,8 +49,8 @@ func (h *MessageHandler) SessionCreated(id string, session types.Session) error 
 func (h *MessageHandler) SessionConnected(id string, session types.Session) error {
 	// send list of members to session
 	if err := session.Send(message.MembersList{
-		Event:    event.MEMBER_LIST,
-		Memebers: h.sessions.Members(),
+		Event:   event.MEMBER_LIST,
+		Members: h.sessions.Members(),
 	}); err != nil {
 		h.logger.Warn().Str("id", id).Err(err).Msgf("sending event %s has failed", event.MEMBER_LIST)
 		return err
@@ -70,7 +79,7 @@ func (h *MessageHandler) SessionConnected(id string, session types.Session) erro
 			Event:  event.MEMBER_CONNECTED,
 			Member: session.Member(),
 		}, nil); err != nil {
-		h.logger.Warn().Err(err).Msgf("broadcasting event %s has failed", event.CONTROL_RELEASE)
+		h.logger.Warn().Err(err).Msgf("broadcasting event %s has failed", event.MEMBER_CONNECTED)
 		return err
 	}
 

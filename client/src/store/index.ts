@@ -1,12 +1,13 @@
 import Vue from 'vue'
 import Vuex from 'vuex'
-import { useAccessor, mutationTree, actionTree } from 'typed-vuex'
+import { useAccessor, mutationTree, getterTree, actionTree } from 'typed-vuex'
 import { EVENT } from '~/neko/events'
 import { AdminLockResource } from '~/neko/messages'
 import { get, set } from '~/utils/localstorage'
 
 import * as video from './video'
 import * as chat from './chat'
+import * as files from './files'
 import * as remote from './remote'
 import * as user from './user'
 import * as settings from './settings'
@@ -55,10 +56,14 @@ export const mutations = mutationTree(state, {
   },
 })
 
+export const getters = getterTree(state, {
+  isLocked: (state) => (resource: AdminLockResource) => resource in state.locked && state.locked[resource],
+})
+
 export const actions = actionTree(
-  { state, mutations },
+  { state, getters, mutations },
   {
-    initialise(store) {
+    initialise() {
       accessor.emoji.initialise()
       accessor.settings.initialise()
     },
@@ -79,12 +84,20 @@ export const actions = actionTree(
       $client.sendMessage(EVENT.ADMIN.UNLOCK, { resource })
     },
 
-    login({ state }, { displayname, password }: { displayname: string; password: string }) {
+    toggleLock(_, resource: AdminLockResource) {
+      if (accessor.isLocked(resource)) {
+        accessor.unlock(resource)
+      } else {
+        accessor.lock(resource)
+      }
+    },
+
+    login(store, { displayname, password }: { displayname: string; password: string }) {
       accessor.setLogin({ displayname, password })
       $client.login(password, displayname)
     },
 
-    logout({ state }) {
+    logout() {
       accessor.setLogin({ displayname: '', password: '' })
       set('displayname', '')
       set('password', '')
@@ -97,7 +110,8 @@ export const storePattern = {
   state,
   mutations,
   actions,
-  modules: { video, chat, user, remote, settings, client, emoji },
+  getters,
+  modules: { video, chat, files, user, remote, settings, client, emoji },
 }
 
 Vue.use(Vuex)

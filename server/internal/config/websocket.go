@@ -1,6 +1,8 @@
 package config
 
 import (
+	"path/filepath"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -8,10 +10,14 @@ import (
 type WebSocket struct {
 	Password      string
 	AdminPassword string
-	Proxy         bool
 	Locks         []string
 
 	ControlProtection bool
+
+	HeartbeatInterval int
+
+	FileTransferEnabled bool
+	FileTransferPath    string
 }
 
 func (WebSocket) Init(cmd *cobra.Command) error {
@@ -25,11 +31,6 @@ func (WebSocket) Init(cmd *cobra.Command) error {
 		return err
 	}
 
-	cmd.PersistentFlags().Bool("proxy", false, "enable reverse proxy mode")
-	if err := viper.BindPFlag("proxy", cmd.PersistentFlags().Lookup("proxy")); err != nil {
-		return err
-	}
-
 	cmd.PersistentFlags().StringSlice("locks", []string{}, "resources, that will be locked when starting (control, login)")
 	if err := viper.BindPFlag("locks", cmd.PersistentFlags().Lookup("locks")); err != nil {
 		return err
@@ -40,14 +41,36 @@ func (WebSocket) Init(cmd *cobra.Command) error {
 		return err
 	}
 
+	cmd.PersistentFlags().Int("heartbeat_interval", 120, "heartbeat interval in seconds")
+	if err := viper.BindPFlag("heartbeat_interval", cmd.PersistentFlags().Lookup("heartbeat_interval")); err != nil {
+		return err
+	}
+
+	// File transfer
+
+	cmd.PersistentFlags().Bool("file_transfer_enabled", false, "enable file transfer feature")
+	if err := viper.BindPFlag("file_transfer_enabled", cmd.PersistentFlags().Lookup("file_transfer_enabled")); err != nil {
+		return err
+	}
+
+	cmd.PersistentFlags().String("file_transfer_path", "/home/neko/Downloads", "path to use for file transfer")
+	if err := viper.BindPFlag("file_transfer_path", cmd.PersistentFlags().Lookup("file_transfer_path")); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (s *WebSocket) Set() {
 	s.Password = viper.GetString("password")
 	s.AdminPassword = viper.GetString("password_admin")
-	s.Proxy = viper.GetBool("proxy")
 	s.Locks = viper.GetStringSlice("locks")
 
 	s.ControlProtection = viper.GetBool("control_protection")
+
+	s.HeartbeatInterval = viper.GetInt("heartbeat_interval")
+
+	s.FileTransferEnabled = viper.GetBool("file_transfer_enabled")
+	s.FileTransferPath = viper.GetString("file_transfer_path")
+	s.FileTransferPath = filepath.Clean(s.FileTransferPath)
 }

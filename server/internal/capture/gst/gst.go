@@ -31,10 +31,27 @@ var pSerial int32
 var pipelines = make(map[int]*Pipeline)
 var pipelinesLock sync.Mutex
 var registry *C.GstRegistry
+var gMainLoop *C.GMainLoop
 
 func init() {
 	C.gst_init(nil, nil)
 	registry = C.gst_registry_get()
+}
+
+func RunMainLoop() {
+	if gMainLoop != nil {
+		return
+	}
+	gMainLoop = C.g_main_loop_new(nil, C.int(0))
+	C.g_main_loop_run(gMainLoop)
+}
+
+func QuitMainLoop() {
+	if gMainLoop == nil {
+		return
+	}
+	C.g_main_loop_quit(gMainLoop)
+	gMainLoop = nil
 }
 
 func CreatePipeline(pipelineStr string) (*Pipeline, error) {
@@ -51,6 +68,7 @@ func CreatePipeline(pipelineStr string) (*Pipeline, error) {
 
 	if gstError != nil {
 		defer C.g_error_free(gstError)
+		fmt.Printf("(pipeline error) %s", C.GoString(gstError.message))
 		return nil, fmt.Errorf("(pipeline error) %s", C.GoString(gstError.message))
 	}
 
@@ -60,18 +78,19 @@ func CreatePipeline(pipelineStr string) (*Pipeline, error) {
 			Str("module", "capture").
 			Str("submodule", "gstreamer").
 			Int("pipeline_id", int(id)).Logger(),
-		Src:    pipelineStr,
-		Ctx:    ctx,
-		Sample: make(chan types.Sample),
+		Src: pipelineStr,
+		Ctx: ctx,
 	}
 
 	pipelines[p.id] = p
 	return p, nil
 }
 
-func (p *Pipeline) AttachAppsink(sinkName string) {
+func (p *Pipeline) AttachAppsink(sinkName string, sampleChannel chan types.Sample) {
 	sinkNameUnsafe := C.CString(sinkName)
 	defer C.free(unsafe.Pointer(sinkNameUnsafe))
+
+	p.Sample = sampleChannel
 
 	C.gstreamer_pipeline_attach_appsink(p.Ctx, sinkNameUnsafe)
 }
@@ -98,7 +117,6 @@ func (p *Pipeline) Destroy() {
 	delete(pipelines, p.id)
 	pipelinesLock.Unlock()
 
-	close(p.Sample)
 	C.free(unsafe.Pointer(p.Ctx))
 	p = nil
 }
@@ -176,8 +194,9 @@ func goHandlePipelineBuffer(buffer unsafe.Pointer, bufferLen C.int, duration C.i
 
 	if ok {
 		pipeline.Sample <- types.Sample{
-			Data:     C.GoBytes(buffer, bufferLen),
-			Duration: time.Duration(duration),
+			Data:      C.GoBytes(buffer, bufferLen),
+			Timestamp: time.Now(),
+			Duration:  time.Duration(duration),
 		}
 	} else {
 		log.Warn().

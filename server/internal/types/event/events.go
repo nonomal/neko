@@ -7,6 +7,10 @@ const (
 )
 
 const (
+	CLIENT_HEARTBEAT = "client/heartbeat"
+)
+
+const (
 	SIGNAL_OFFER     = "signal/offer"
 	SIGNAL_ANSWER    = "signal/answer"
 	SIGNAL_PROVIDE   = "signal/provide"
@@ -35,15 +39,20 @@ const (
 )
 
 const (
+	FILETRANSFER_LIST    = "filetransfer/list"
+	FILETRANSFER_REFRESH = "filetransfer/refresh"
+)
+
+const (
 	SCREEN_CONFIGURATIONS = "screen/configurations"
 	SCREEN_RESOLUTION     = "screen/resolution"
 	SCREEN_SET            = "screen/set"
 )
 
 const (
-	BORADCAST_STATUS  = "broadcast/status"
-	BORADCAST_CREATE  = "broadcast/create"
-	BORADCAST_DESTROY = "broadcast/destroy"
+	BROADCAST_STATUS  = "broadcast/status"
+	BROADCAST_CREATE  = "broadcast/create"
+	BROADCAST_DESTROY = "broadcast/destroy"
 )
 
 const (
